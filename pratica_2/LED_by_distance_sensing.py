@@ -1,9 +1,13 @@
-import RPi.GPIO as GPIO
-import time
+try:
+    import RPi.GPIO as GPIO   # tenta usar o GPIO real (caso em Rasp)
+except (ImportError, RuntimeError):
+    import SimulRPi.GPIO as GPIO   # fallback pro SimulRPiimport time (caso em ambiente de simulação)
+
 import csv
 from datetime import datetime
 import threading
 import os
+import time
 
 # MACROS para o programa
 PWM_PIN = 18 # Pino de saída (BCM mode)
@@ -13,7 +17,6 @@ PIN_ECHO = 24 # Pino para ler o pulso de retorno
 
 
 GPIO.setmode(GPIO.BCM)
-GPIO.setup(PWM_PIN, GPIO.OUT)
 
 
 sens_value = 0.0                    # Variável para IO (coleta dos valores do sensor, leitura pelo LED, e leitura pelo escritoor de log)

@@ -1,0 +1,6 @@
+evdev==1.9.2
+pynput==1.8.1
+python-xlib==0.33
+SimulRPi==0.1.0a1; platform_machine == "linux"
+six==1.17.0
+RPi.GPIO==0.7.1; platform_machine == "armv7l" or platform_machine == "aarch64"
