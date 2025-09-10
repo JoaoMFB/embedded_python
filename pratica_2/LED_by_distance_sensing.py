@@ -1,152 +1,132 @@
-try:
-    import RPi.GPIO as GPIO   # tenta usar o GPIO real (caso em Rasp)
-except (ImportError, RuntimeError):
-    import SimulRPi.GPIO as GPIO   # fallback pro SimulRPiimport time (caso em ambiente de simulação)
-
-import csv
-from datetime import datetime
+import RPi.GPIO as GPIO
 import threading
-import os
 import time
 
-# MACROS para o programa
-PWM_PIN = 18 # Pino de saída (BCM mode)
-PIN_TRIG = 23 # Pino para enviar o pulso de ativação
-PIN_ECHO = 24 # Pino para ler o pulso de retorno
-
-
+# --- Configuração dos Pinos ---
+# Use o modo BCM para referenciar os pinos pelo número GPIO.
+PIN_TRIG = 23
+PIN_ECHO = 24
+PIN_LED = 18
 
 GPIO.setmode(GPIO.BCM)
 
+# --- Variáveis Globais e Sincronização ---
+# Variavel global para armazenar a distância em centímetros.
+distance_value = 0.0
 
-sens_value = 0.0                    # Variável para IO (coleta dos valores do sensor, leitura pelo LED, e leitura pelo escritoor de log)
-mutex_sens = threading.Lock()       # Cria um mutex para a variavel mutex_sens
+# Mutex para proteger a variável global.
+mutex_distance = threading.Lock()
 
-filename = datetime.now().strftime("log/log_%Y%m%d_%H%M%S.csv")
-# Cria o CSV e escreve cabeçalho
+# --- Configuração dos Componentes ---
+GPIO.setup(PIN_TRIG, GPIO.OUT)
+GPIO.setup(PIN_ECHO, GPIO.IN)
+GPIO.setup(PIN_LED, GPIO.OUT)
 
+# Configura o PWM do LED. A frequência de 100 Hz é uma boa escolha.
+pwm_led = GPIO.PWM(PIN_LED, 100)
+pwm_led.start(0)  # Inicia o PWM com 0% de ciclo de trabalho (LED apagado)
 
-# Função para medir a distância
-def get_distance():
+# --- Thread 1: Leitura do Sensor ---
+def read_sensor_thread():
     """
-    Mede a distância usando o sensor HC-SR04.
-    Retorna a distância em centímetros.
+    Thread responsável por ler o sensor HC-SR04 continuamente.
     """
-   
-    # Envia um pulso de 10 microssegundos para ativar o sensor
-    GPIO.output(PIN_TRIG, True)
-    time.sleep(0.00001)
+    print("Thread de leitura do sensor iniciada.")
+    global distance_value
+    
+    # Garante que o pino TRIG está em LOW no início para estabilizar.
     GPIO.output(PIN_TRIG, False)
+    time.sleep(2) 
 
-    # Mede o tempo de viagem da onda
-    # O pino ECHO irá para HIGH quando o pulso for enviado.
-    # start_time registra o momento em que isso acontece.
-    start_time = time.time()
-    while GPIO.input(PIN_ECHO) == 0:
-        start_time = time.time()
-    
-    # O pino ECHO voltará para LOW quando a onda retornar.
-    # end_time registra o momento em que isso acontece.
-    end_time = time.time()
-    while GPIO.input(PIN_ECHO) == 1:
-        end_time = time.time()
-
-    # Calcula a duração do pulso
-    pulse_duration = end_time - start_time
-
-    # Calcula a distância
-    # A velocidade do som é 34300 cm/s.
-    # A distância é a metade do tempo de viagem.
-    distance = (pulse_duration * 34300) / 2
-    
-    return round(distance, 2)
-
-def gpioPWM_ledControl():
-    print(f"Thread para controle do LED iniciada com ID: {threading.get_ident()}")
-    GPIO.setup(PWM_PIN, GPIO.OUT)   # Usando o pino PWM_PIN para o LED
-    pwm = GPIO.PWM(PWM_PIN, 1000)   # Configura o PWM na frequência de 1kHz
-    pwm.start(0)                    # Inicia o PWM com 0% de duty cycle (LED apagado)
-
-    global sens_value
-    local_var = 0.0
     while True:
-        with mutex_sens:
-            local_var = sens_value
+        # Envia um pulso de 10 microssegundos.
+        GPIO.output(PIN_TRIG, True)
+        time.sleep(0.00001)
+        GPIO.output(PIN_TRIG, False)
+
+        # Mede o tempo de viagem da onda.
+        start_time = time.time()
+        while GPIO.input(PIN_ECHO) == 0:
+            start_time = time.time()
         
-        if(local_var<0):
-            print("error in reading: reading less than 0")
-        elif(local_var>100):
-            print("distance read more than 100, get closer to the sensor")
-            local_var = 100
-        else:
-            print(f"Distance: {local_var} cm - LED bright in: {local_var}%")
-        pwm.ChangeDutyCycle(local_var)  # Ajusta o brilho do LED com base na distância
-                
-        time.sleep(0.1) # Para segurar o excesso de leituras                 RETIRAR
-        agora = datetime.now().strftime("%H:%M:%S.%f")[:-3]
-        try:
-            with open(filename, mode="a", newline="") as file:
-                writer = csv.writer(file)
-                writer.writerow([agora, f"{local_var:.2f}"])
-        except Exception as e:
-            print(f"[LED thread] Erro ao escrever no arquivo: {e}")
+        end_time = time.time()
+        while GPIO.input(PIN_ECHO) == 1:
+            end_time = time.time()
 
-# Contagem aleatória
-def readSonicSensor():
-    print(f"Thread de leitura do sensor ultrassônico iniciada com ID: {threading.get_ident()}\n\tPorta Trigger: {PIN_TRIG}\n\tPorta Echo: {PIN_ECHO}")
-    GPIO.setup(PIN_TRIG, GPIO.OUT) # Configura o pino do Trigger como saída
-    GPIO.setup(PIN_ECHO, GPIO.IN)  # Configura o pino do Echo como entrada
-     # Garante que o pino TRIG está em LOW (desligado) no início
-    GPIO.output(PIN_TRIG, False)
-    time.sleep(2) # Pausa de 2 segundos para o sensor se estabilizar
-
-    global sens_value
-    local_var = 0.0
-    try:
-        while True:
-            try:
-                local_var = get_distance()
-                with mutex_sens:
-                    sens_value = local_var # Em centimetros
-            except Exception as e:
-                print(f"[Sensor thread] Erro ao medir distância: {e}")
-    except Exception as e:
-        print(f"[Sensor thread] Exceção: {e}")
+        pulse_duration = end_time - start_time
+        
+        # Calcula a distância em centímetros.
+        distance = (pulse_duration * 34300) / 2
+        
+        # Protege a variável compartilhada com o mutex.
+        with mutex_distance:
+            distance_value = distance
+            
+        # Pequena pausa para liberar o processador.
+        time.sleep(0.1)
 
 
+# --- Thread 2: Controle do LED ---
+def control_led_thread():
+    """
+    Thread responsável por controlar o brilho do LED com base na distância.
+    """
+    print("Thread de controle do LED iniciada.")
+    global distance_value
     
-    time.sleep(0.5) # Aguarda meio segundo antes da próxima leitura
-      
+    while True:
+        local_distance = 0.0
+        
+        # Lê a variável compartilhada com o mutex.
+        with mutex_distance:
+            local_distance = distance_value
 
+        # Mapeia a distância (em cm) para o ciclo de trabalho do PWM (0 a 100).
+        # Vamos usar um mapeamento simples:
+        # 0 cm a 100 cm -> 100% a 0% de brilho (inversamente proporcional).
+        if local_distance >= 100:
+            duty_cycle = 0  # LED apagado para distâncias maiores que 1 metro.
+        elif local_distance <= 0:
+            duty_cycle = 100  # LED com brilho máximo para distâncias menores ou iguais a 0.
+        else:
+            # Mapeamento linear de 100cm para 0cm.
+            duty_cycle = 100 - local_distance
+
+        # Ajusta o brilho do LED.
+        pwm_led.ChangeDutyCycle(duty_cycle)
+        
+        print(f"Distância: {local_distance:.2f} cm - Brilho do LED: {duty_cycle:.2f}%")
+
+        # Pequena pausa para evitar sobrecarregar a CPU.
+        time.sleep(0.05)
+
+
+# --- Função Principal ---
 def main():
-
+    """
+    Cria e inicia as threads.
+    """
     try:
-        os.makedirs("log", exist_ok=True)
-        
-        with open(filename, mode="w", newline="") as file:
-            writer = csv.writer(file)
-            writer.writerow(["time", "wrote"])
+        # Cria as threads.
+        thread_sensor = threading.Thread(target=read_sensor_thread)
+        thread_led = threading.Thread(target=control_led_thread)
 
-        print(f"Processo principal PID: {os.getpid()}") # Exibe o PID do processo principal
-        # Cria threads para executar as funções simultaneamente
-        thread1 = threading.Thread(target=gpioPWM_ledControl)
-        thread2 = threading.Thread(target=readSonicSensor)
-        # Inicia as threads
-        thread1.start()
-        thread2.start()
-        # Aguarda a conclusão das threads
-        thread1.join()
-        thread2.join()
-        
+        # Inicia as threads.
+        thread_sensor.start()
+        thread_led.start()
+
+        # Espera as threads terminarem.
+        thread_sensor.join()
+        thread_led.join()
+
     except KeyboardInterrupt:
-        print("Interrompido pelo usuário.")
-    except Exception as e:
-        print(f"[Main] Erro: {e}")
+        print("Programa encerrado pelo usuário.")
     finally:
+        # Limpa os pinos GPIO.
+        pwm_led.stop()  # Para o PWM antes de limpar.
         GPIO.cleanup()
+        print("GPIO limpo.")
 
 
-
-# inicio do programa
 if __name__ == '__main__':
     main()
